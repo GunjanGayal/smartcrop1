@@ -48,7 +48,7 @@ def create_tables():
 create_tables()
 
 # ---------------- MODEL ----------------
-MODEL_PATH = "plant_disease_model.h5"
+MODEL_PATH = "plant_disease_model.keras"
 if os.path.exists(MODEL_PATH):
     model = tf.keras.models.load_model(MODEL_PATH)
 else:
