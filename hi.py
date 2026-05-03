@@ -109,22 +109,18 @@ def preprocess_image(path):
 # ---------------- BASIC LEAF-LIKE FILTER ----------------
 def is_leaf_like(path):
     img = cv2.imread(path)
-    if img is None:
-        return False
-    img = cv2.resize(img, (128, 128))
+    img = cv2.resize(img,(128,128))
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    # Green (healthy leaves)
-    mask_green = cv2.inRange(hsv, np.array([25,30,30]), np.array([90,255,255]))
-    # Yellow (diseased leaves)
-    mask_yellow = cv2.inRange(hsv, np.array([15,30,30]), np.array([35,255,255]))
-    # Brown (dry/heavily diseased)
-    mask_brown = cv2.inRange(hsv, np.array([5,20,20]), np.array([25,200,200]))
-    combined = cv2.bitwise_or(mask_green, mask_yellow)
-    combined = cv2.bitwise_or(combined, mask_brown)
-    return (np.sum(combined > 0) / combined.size) >= 0.08
+    lower_green = np.array([25,40,40])
+    upper_green = np.array([90,255,255])
+    mask = cv2.inRange(hsv, lower_green, upper_green)
+    green_ratio = np.sum(mask > 0) / mask.size
+    if green_ratio < 0.15:
+        return False
+    return True
 
 # ---------------- ENTROPY CHECK ----------------
-def is_valid_prediction(probs, threshold=0.75):
+def is_valid_prediction(probs, threshold=0.6):
     probs = np.array(probs)
     probs = probs / np.sum(probs)
     entropy = -np.sum(probs * np.log(probs + 1e-10))
@@ -277,11 +273,10 @@ def upload():
         if is_leaf_like(path) and model:
             img = preprocess_image(path)
             probs = model.predict(img)[0]
-            
-            if is_valid_prediction(probs, threshold=0.75):
+            if is_valid_prediction(probs, threshold=0.45):
                 index = np.argmax(probs)
                 confidence = float(probs[index]) * 100
-                if confidence >= 50:
+                if confidence >= 70:
                     predicted_class = class_names[index]
                     if "___" in predicted_class:
                         crop, disease = predicted_class.split("___",1)
