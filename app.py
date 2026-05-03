@@ -51,20 +51,10 @@ create_tables()
 # ---------------- MODEL ----------------
 def load_model_safe():
     try:
-        # Pehle weights+config se load karo (most compatible)
-        if os.path.exists("model_config.json") and os.path.exists("model_weights.weights.h5"):
-            with open("model_config.json") as f:
-                config = json.load(f)
-            m = tf.keras.Sequential.from_config(config)
-            m.load_weights("model_weights.weights.h5")
-            print("Model loaded from weights!")
-            return m
-        # Fallback: .keras file
-        elif os.path.exists("plant_disease_model.keras"):
+        if os.path.exists("plant_disease_model.keras"):
             m = tf.keras.models.load_model("plant_disease_model.keras")
             print("Model loaded from .keras!")
             return m
-        # Fallback: .h5 file
         elif os.path.exists("plant_disease_model.h5"):
             m = tf.keras.models.load_model("plant_disease_model.h5")
             print("Model loaded from .h5!")
