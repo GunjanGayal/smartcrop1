@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 import math
 import cv2
+import json
 
 app = Flask(__name__)
 app.secret_key = "smartcropsecret"
@@ -48,11 +49,34 @@ def create_tables():
 create_tables()
 
 # ---------------- MODEL ----------------
-MODEL_PATH = "plant_disease_model.keras"
-if os.path.exists(MODEL_PATH):
-    model = tf.keras.models.load_model(MODEL_PATH)
-else:
-    model = None
+def load_model_safe():
+    try:
+        # Pehle weights+config se load karo (most compatible)
+        if os.path.exists("model_config.json") and os.path.exists("model_weights.weights.h5"):
+            with open("model_config.json") as f:
+                config = json.load(f)
+            m = tf.keras.Sequential.from_config(config)
+            m.load_weights("model_weights.weights.h5")
+            print("Model loaded from weights!")
+            return m
+        # Fallback: .keras file
+        elif os.path.exists("plant_disease_model.keras"):
+            m = tf.keras.models.load_model("plant_disease_model.keras")
+            print("Model loaded from .keras!")
+            return m
+        # Fallback: .h5 file
+        elif os.path.exists("plant_disease_model.h5"):
+            m = tf.keras.models.load_model("plant_disease_model.h5")
+            print("Model loaded from .h5!")
+            return m
+        else:
+            print("No model file found!")
+            return None
+    except Exception as e:
+        print(f"Model load error: {e}")
+        return None
+
+model = load_model_safe()
 
 class_names = [
 "Apple___Apple_scab","Apple___Black_rot","Apple___Cedar_apple_rust","Apple___healthy",
@@ -84,27 +108,19 @@ def preprocess_image(path):
 
 # ---------------- BASIC LEAF-LIKE FILTER ----------------
 def is_leaf_like(path):
-
     img = cv2.imread(path)
     img = cv2.resize(img,(128,128))
-
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
     lower_green = np.array([25,40,40])
     upper_green = np.array([90,255,255])
-
     mask = cv2.inRange(hsv, lower_green, upper_green)
-
     green_ratio = np.sum(mask > 0) / mask.size
-
-    # agar green bahut kam hai to leaf nahi
     if green_ratio < 0.15:
         return False
-
     return True
 
 # ---------------- ENTROPY CHECK ----------------
-def  is_valid_prediction(probs, threshold=0.6):
+def is_valid_prediction(probs, threshold=0.6):
     probs = np.array(probs)
     probs = probs / np.sum(probs)
     entropy = -np.sum(probs * np.log(probs + 1e-10))
@@ -120,7 +136,6 @@ def home():
 def logout():
     session.pop("user", None)
     return redirect("/")
-
 
 # -------- User Registration --------
 @app.route("/register", methods=["GET","POST"])
@@ -140,43 +155,34 @@ def register():
         return redirect("/upload")
     return render_template("register.html")
 
-# Admin Login
-
-# Admin Login
-# --------- ADMIN SECTION (Working) ---------
-
-# Main Admin Login (works with /admin)
+# --------- ADMIN SECTION ---------
 @app.route("/admin", methods=["GET","POST"])
 def admin_login():
     error = None
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
-        if (username == "admin" and password == "admin123") or(username == "Mamta" and password == "mamta123") or (username == "Sivali" and password == "sivali123")    :
+        if (username == "admin" and password == "admin123") or(username == "Mamta" and password == "mamta123") or (username == "Sivali" and password == "sivali123"):
             session["admin"] = True
-            return redirect("/admin/users")  # Dashboard
+            return redirect("/admin/users")
         else:
             error = "Invalid admin credentials"
     return render_template("admin_login.html", error=error)
 
-# Optional alias route: /admin_login
 @app.route("/admin_login", methods=["GET","POST"])
 def admin_login_alias():
-    return admin_login()  # Calls the same login function
+    return admin_login()
 
-# Dashboard showing all users
 @app.route("/admin/users")
 def admin_users():
     if not session.get("admin"):
-        return redirect("/admin")  # Redirect if not logged in
+        return redirect("/admin")
     conn = get_db_connection()
     users = conn.execute("SELECT * FROM users").fetchall()
     uploads = conn.execute("SELECT * FROM uploads ORDER BY timestamp DESC").fetchall()
     conn.close()
     return render_template("admin_dashboard.html", users=users, uploads=uploads)
 
-
-# Edit user
 @app.route("/admin/edit_user/<int:user_id>", methods=["GET","POST"])
 def edit_user(user_id):
     if not session.get("admin"):
@@ -193,7 +199,6 @@ def edit_user(user_id):
     conn.close()
     return render_template("admin_edit_user.html", user=user)
 
-# Delete user
 @app.route("/admin/delete_user/<int:user_id>")
 def delete_user(user_id):
     if not session.get("admin"):
@@ -203,116 +208,81 @@ def delete_user(user_id):
     conn.commit()
     conn.close()
     return redirect("/admin/users")
-# Multiple delete users
+
 @app.route("/admin/delete_multiple_users", methods=["POST"])
 def delete_multiple_users():
     if not session.get("admin"):
         return redirect("/admin")
-
     user_ids = request.form.getlist("user_ids")
-
     if user_ids:
         conn = get_db_connection()
         conn.executemany("DELETE FROM users WHERE id=?", [(uid,) for uid in user_ids])
         conn.commit()
         conn.close()
-
     return redirect("/admin/users")
+
 @app.route("/admin/delete_upload/<int:id>")
 def delete_upload(id):
     if not session.get("admin"):
         return redirect("/admin")
-
     conn = get_db_connection()
-
     file = conn.execute("SELECT filename FROM uploads WHERE id=?", (id,)).fetchone()
-
     if file:
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], file["filename"])
         if os.path.exists(filepath):
             os.remove(filepath)
-
     conn.execute("DELETE FROM uploads WHERE id=?", (id,))
     conn.commit()
     conn.close()
-
     return redirect("/admin/users")
 
-
-# ✅ YAHAN PASTE KARO (function ke bahar)
 @app.route("/admin/delete_multiple_uploads", methods=["POST"])
 def delete_multiple_uploads():
     if not session.get("admin"):
         return redirect("/admin")
-
     upload_ids = request.form.getlist("upload_ids")
-
     if upload_ids:
         conn = get_db_connection()
-
         for uid in upload_ids:
             file = conn.execute("SELECT filename FROM uploads WHERE id=?", (uid,)).fetchone()
-
             if file:
                 filepath = os.path.join(app.config["UPLOAD_FOLDER"], file["filename"])
                 if os.path.exists(filepath):
                     os.remove(filepath)
-
             conn.execute("DELETE FROM uploads WHERE id=?", (uid,))
-
         conn.commit()
         conn.close()
-
     return redirect("/admin/users")
+
 @app.route("/upload",methods=["GET","POST"])
 def upload():
-
-
     if "user" not in session:
         return redirect("/register")
-
     if request.method=="POST":
-
         file=request.files["image"]
-
         if file.filename=="":
             return "No file selected"
-
         filename = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{secure_filename(file.filename)}"
-
         if "." not in filename or filename.split(".")[-1].lower() not in ALLOWED_EXTENSIONS:
             return "Invalid file type"
-
         path=os.path.join(app.config["UPLOAD_FOLDER"],filename)
         file.save(path)
-
         crop = "Invalid Image"
         disease = "Not a Crop Leaf"
         confidence = 0
-
-        # Leaf check
         if is_leaf_like(path) and model:
-
             img = preprocess_image(path)
             probs = model.predict(img)[0]
-
             if is_valid_prediction(probs, threshold=0.45):
-
                 index = np.argmax(probs)
                 confidence = float(probs[index]) * 100
-
-                # confidence validation
                 if confidence >= 70:
-
                     predicted_class = class_names[index]
-
                     if "___" in predicted_class:
                         crop, disease = predicted_class.split("___",1)
                     else:
                         crop = predicted_class
                         disease = "Unknown"
-
-        # Save upload record
         conn = get_db_connection()
         conn.execute(
             "INSERT INTO uploads (username,filename,crop,disease,confidence,timestamp) VALUES (?,?,?,?,?,?)",
@@ -320,7 +290,6 @@ def upload():
         )
         conn.commit()
         conn.close()
-
         return render_template(
             "result.html",
             crop=crop,
@@ -330,9 +299,9 @@ def upload():
             confidence=round(confidence,2),
             image_file=filename
         )
-
     return render_template("upload.html")
+
 # ---------------- RUN ----------------
-# Nayi line:
-port = int(os.environ.get("PORT", 5000))
-app.run(host="0.0.0.0", port=port, debug=False)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
